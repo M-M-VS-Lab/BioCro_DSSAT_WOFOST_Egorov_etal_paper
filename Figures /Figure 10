@@ -1,0 +1,124 @@
+import os
+import re
+import glob
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from PIL import ImageColor
+
+# =============================================================================
+# --- CONFIGURATION ---
+# =============================================================================
+DATA_ROOT = "./data" 
+
+# Model mapping for Maize
+model_dirs = {
+    'WOFOST': os.path.join(DATA_ROOT, 'Maize_WOFOST'),
+    'DSSAT':  os.path.join(DATA_ROOT, 'Maize_DSSAT')
+}
+
+CO2_VALUE = 400
+model_base_colors = {'WOFOST': '#70F249', 'DSSAT': 'magenta'}
+blend_factor_for_h = {'1': 0.0, '2': 0.3, '3': 0.6, '123': 0.7}
+heat_levels = ['1', '2', '3', '123']
+models = list(model_dirs.keys())
+group_gap = 0.8
+
+# =============================================================================
+# --- HELPER FUNCTIONS ---
+# =============================================================================
+
+def blend_with_white(hex_color, factor):
+    r, g, b = ImageColor.getrgb(hex_color)
+    return '#{:02x}{:02x}{:02x}'.format(
+        int(r + (255 - r) * factor),
+        int(g + (255 - g) * factor),
+        int(b + (255 - b) * factor)
+    )
+
+model_heat_colors = {
+    m: {h: blend_with_white(model_base_colors[m], blend_factor_for_h[h]) for h in heat_levels}
+    for m in models
+}
+
+def parse_scenario(scen):
+    # Extracts T and Heat from folder naming
+    part = scen.split('_')[1]
+    cpos = part.find('C'); tpos = part.find('T', cpos + 1); hpos = part.find('H', tpos + 1)
+    co2 = int(part[cpos + 1:tpos]); tmp = part[tpos + 1:hpos]
+    temp = 0.0 if tmp == 'BL' else float(tmp); heat = part[hpos + 1:]
+    return co2, temp, heat
+
+def collect_ts(base_dir, target_co2):
+    ts = {}
+    # Recursive search for csv files
+    for fp in glob.glob(os.path.join(base_dir, '**/*.csv'), recursive=True):
+        scen_name = os.path.basename(os.path.dirname(fp))
+        _, temp, heat = parse_scenario(scen_name)
+        
+        # Filter by CO2
+        # Assuming folder naming contains CO2 value, otherwise logic needs adjust
+        if f'C{target_co2}' not in scen_name: continue
+        
+        year_match = re.search(r'(20\d{2})', fp)
+        if not year_match: continue
+        yr = int(year_match.group(1))
+        
+        df = pd.read_csv(fp)
+        col = 'yield' if 'yield' in df.columns else 'Grain'
+        if (temp, heat) not in ts: ts[(temp, heat)] = {}
+        ts[(temp, heat)][yr] = df[col].mean()
+        
+    return {k: pd.Series(v) for k, v in ts.items()}
+
+# =============================================================================
+# --- MAIN PLOTTING ---
+# =============================================================================
+
+all_ts = {m: collect_ts(d, CO2_VALUE) for m, d in model_dirs.items()}
+temp_vals = sorted({t for ts in all_ts.values() for (t, h) in ts.keys()})
+
+fig, axes = plt.subplots(1, len(temp_vals), figsize=(18, 6), sharex=True, sharey=True)
+plt.subplots_adjust(wspace=0.2)
+
+for j, temp in enumerate(temp_vals):
+    ax = axes[j]
+    data_list, positions, colors_list = [], [], []
+    group_first, group_last = {}, {}
+    pos = 1
+    xticks, xlabels = [], []
+
+    for hidx, h in enumerate(heat_levels):
+        start_pos = pos
+        for midx, m in enumerate(models):
+            base, key = (temp, '0'), (temp, h)
+            if base in all_ts[m] and key in all_ts[m]:
+                yrs = all_ts[m][base].index
+                pct = 100 * (all_ts[m][key].reindex(yrs).values - all_ts[m][base].values) / all_ts[m][base].values
+                data_list.append(pct)
+                positions.append(pos)
+                colors_list.append(model_heat_colors[m][h])
+            if midx == 0: group_first[h] = pos
+            if midx == len(models) - 1: group_last[h] = pos
+            pos += 1
+        if hidx < len(heat_levels) - 1: pos += group_gap
+        xticks.append((start_pos + pos - 1) / 2)
+        xlabels.append(f"H{h}–H0")
+
+    # Jitter scatter
+    for idx, d in enumerate(data_list):
+        ax.scatter(np.full_like(d, positions[idx]) + np.random.uniform(-0.14, 0.14, size=len(d)), 
+                   d, color=colors_list[idx], edgecolor='k', s=32, linewidth=0.3, alpha=0.7)
+
+    # Boxplots
+    ax.boxplot(data_list, positions=positions, widths=0.6, showfliers=False,
+               boxprops=dict(color='black'), whiskerprops=dict(color='black'))
+
+    ax.axhline(0, color='black', linestyle='--', linewidth=0.8)
+    ax.set_xticks(xticks); ax.set_xticklabels(xlabels, fontsize=10)
+    ax.set_ylim(-15, 5)
+    if j == 0: ax.set_ylabel("Δ yield vs H0 (%)", fontsize=11)
+    ax.set_xlabel(f"T = {temp:.1f}°C", fontsize=12)
+
+plt.savefig("Fig10_Heatwave_Impacts_Maize.png", dpi=600)
+plt.show()
