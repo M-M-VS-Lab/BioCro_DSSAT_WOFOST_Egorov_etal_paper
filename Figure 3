@@ -1,1 +1,104 @@
+import os
+import re
+import glob
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+import matplotlib.pyplot as plt
+from scipy.stats import linregress
+from matplotlib.ticker import MaxNLocator
 
+# =============================================================================
+# --- CONFIGURATION ---
+# =============================================================================
+# Set the root directory where the Zenodo datasets (e.g., Soybean_WOFOST, etc.) are extracted
+DATA_ROOT = "./data" 
+
+# USDA data paths
+usda_irrig_path    = os.path.join(DATA_ROOT, 'USDA_CSV_soybean/mean_yield_districts_60_90.csv')
+usda_nonirrig_path = os.path.join(DATA_ROOT, 'USDA_CSV_soybean/mean_yield_non_irrigated_districts_60_90.csv')
+grid_pts_shp       = os.path.join(DATA_ROOT, '4km_grid/4km_grid_point_no_city.shp')
+
+# Mapping models to folders (e.g., folder name "Soybean_WOFOST")
+models_config = {
+    'WOFOST': os.path.join(DATA_ROOT, 'Soybean_WOFOST'),
+    'BioCro': os.path.join(DATA_ROOT, 'Soybean_BioCro'),
+    'DSSAT':  os.path.join(DATA_ROOT, 'Soybean_DSSAT')
+}
+
+# Styling
+model_colors = {'WOFOST': '#70F249', 'BioCro': 'blue', 'DSSAT': 'magenta'}
+fill_alpha   = {'WOFOST': 0.2, 'BioCro': 0.1, 'DSSAT': 0.1}
+usda_colors  = {'USDA Irrigated': 'black', 'USDA Non-irrigated': 'grey'}
+
+# =============================================================================
+# --- FUNCTIONS ---
+# =============================================================================
+
+def compute_yield_trend(base_dir, whole_ids):
+    """
+    Calculates mean yield and linear trend for a model.
+    Looks recursively for .csv files in subdirectories.
+    """
+    ts_mean, ts_std = {}, {}
+    year_pat = re.compile(r'(20\d{2})')
+    
+    # Recursive search for all csv files in the model directory
+    for fp in glob.glob(os.path.join(base_dir, '**/*.csv'), recursive=True):
+        m = year_pat.search(fp)
+        if not m: continue
+        y = int(m.group(1))
+        
+        df = pd.read_csv(fp)
+        id_col = next((c for c in ('real_id','ID','id') if c in df.columns), None)
+        ycol   = next((c for c in ('yield','Grain') if c in df.columns), None)
+        
+        if id_col and ycol:
+            vals = df[df[id_col].isin(whole_ids)][ycol].dropna()
+            if not vals.empty:
+                # Store data points for the specific year
+                if y not in ts_mean: ts_mean[y] = []
+                ts_mean[y].extend(vals.tolist())
+    
+    # Aggregate means and stds per year
+    yrs = sorted(ts_mean.keys())
+    means = [np.mean(ts_mean[y]) for y in yrs]
+    stds = [np.std(ts_mean[y]) for y in yrs]
+    
+    slope, intercept, r_val, p_val, _ = linregress(yrs, means)
+    return np.array(yrs), np.array(means), np.array(stds), slope, intercept
+
+# =============================================================================
+# --- MAIN PLOTTING ---
+# =============================================================================
+
+# Load Grid IDs
+grid_pts = gpd.read_file(grid_pts_shp)
+grid_pts['real_id'] = grid_pts['ORIG_FID']
+whole_ids = set(grid_pts['real_id'].unique())
+
+fig, ax_yield = plt.subplots(figsize=(11, 7), dpi=600)
+
+# Plot Model Trends
+for name, base_dir in models_config.items():
+    yrs, means, stds, slope, intercept = compute_yield_trend(base_dir, whole_ids)
+    ax_yield.plot(yrs, means, color=model_colors[name], lw=1.8, label=name)
+    ax_yield.fill_between(yrs, means - stds, means + stds, color=model_colors[name], alpha=fill_alpha[name])
+    ax_yield.plot(yrs, intercept + slope * yrs, color=model_colors[name], lw=0.8, linestyle='--')
+
+# Plot USDA Data
+for path, lbl in [(usda_irrig_path, 'USDA Irrigated'), (usda_nonirrig_path, 'USDA Non-irrigated')]:
+    if os.path.exists(path):
+        df_u = pd.read_csv(path)
+        # Assuming the CSV has columns 'Year' and 'Mean_60_90'
+        yrs_u, vals_u = df_u['Year'].values, df_u['Mean_60_90'].values
+        ax_yield.plot(yrs_u, vals_u, color=usda_colors[lbl], lw=2.2, label=lbl)
+        slope_u, intercept_u, *_ = linregress(yrs_u, vals_u)
+        ax_yield.plot(yrs_u, intercept_u + slope_u * yrs_u, color=usda_colors[lbl], lw=1.2)
+
+ax_yield.set_xlabel('Year')
+ax_yield.set_ylabel('Mean yield (t ha⁻¹)')
+ax_yield.xaxis.set_major_locator(MaxNLocator(integer=True))
+ax_yield.legend(loc='lower right', frameon=False)
+plt.tight_layout()
+plt.show()
