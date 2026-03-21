@@ -1,0 +1,133 @@
+import os
+import re
+import glob
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from PIL import ImageColor
+
+# =============================================================================
+# --- CONFIGURATION ---
+# =============================================================================
+# Define the root directory for your Zenodo data extraction
+DATA_ROOT = "./data" 
+
+# Model mapping to extracted folders
+model_dirs = {
+    'WOFOST': os.path.join(DATA_ROOT, 'Soybean_WOFOST'),
+    'BioCro': os.path.join(DATA_ROOT, 'Soybean_BioCro'),
+    'DSSAT':  os.path.join(DATA_ROOT, 'Soybean_DSSAT')
+}
+
+model_base_colors = {'WOFOST': '#70F249', 'BioCro': 'blue', 'DSSAT': 'magenta'}
+blend_factor_for_h = {'1': 0.0, '2': 0.3, '3': 0.6, '123': 0.7}
+heat_levels = ['1', '2', '3', '123']
+models = ['WOFOST', 'BioCro', 'DSSAT']
+group_gap = 0.8 
+
+# =============================================================================
+# --- HELPER FUNCTIONS ---
+# =============================================================================
+
+def blend_with_white(hex_color, factor):
+    r, g, b = ImageColor.getrgb(hex_color)
+    return '#{:02x}{:02x}{:02x}'.format(
+        int(r + (255 - r) * factor),
+        int(g + (255 - g) * factor),
+        int(b + (255 - b) * factor)
+    )
+
+heat_model_colors = {
+    m: {h: blend_with_white(model_base_colors[m], blend_factor_for_h[h]) for h in heat_levels}
+    for m in models
+}
+
+def parse_scenario(scen):
+    # Extracts CO2, Temp, and Heatwave level from folder naming convention
+    part = scen.split('_')[1]
+    cpos = part.find('C')
+    tpos = part.find('T', cpos + 1)
+    hpos = part.find('H', tpos + 1)
+    co2   = int(part[cpos + 1:tpos])
+    tmp   = part[tpos + 1:hpos]
+    temp  = 0.0 if tmp == 'BL' else float(tmp)
+    heat  = part[hpos + 1:]
+    return co2, temp, heat
+
+year_pat = re.compile(r'(20\d{2})')
+
+def collect_ts(base_dir):
+    """Parses model output directories to extract mean annual yield time series."""
+    ts_dict = {}
+    for scen in sorted(os.listdir(base_dir)):
+        scen_path = os.path.join(base_dir, scen)
+        if not os.path.isdir(scen_path): continue
+        co2, temp, heat = parse_scenario(scen)
+        ts = {}
+        for fp in sorted(glob.glob(os.path.join(scen_path, '*.csv'))):
+            m = year_pat.search(fp)
+            if not m: continue
+            year = int(m.group(1))
+            df = pd.read_csv(fp)
+            ycol = 'yield' if 'yield' in df.columns else 'Grain'
+            ts[year] = df[ycol].mean()
+        if ts:
+            yrs = sorted(ts.keys())
+            ts_dict[(co2, temp, heat)] = pd.Series([ts[y] for y in yrs], index=yrs)
+    return ts_dict
+
+# =============================================================================
+# --- DATA LOADING & PLOTTING ---
+# =============================================================================
+
+all_ts = {m: collect_ts(p) for m, p in model_dirs.items()}
+scenarios = set((c, t) for ts in all_ts.values() for (c, t, h) in ts.keys())
+co2_list = sorted({c for c, t in scenarios})
+temp_list = sorted({t for c, t in scenarios})
+
+fig, axes = plt.subplots(len(co2_list), len(temp_list), figsize=(18, 12), sharex=True, sharey=True)
+
+for i, co2 in enumerate(co2_list):
+    for j, temp in enumerate(temp_list):
+        ax = axes[i, j] if axes.ndim == 2 else axes[max(i, j)]
+        data_list, positions, colors_list = [], [], []
+        pos = 1
+        group_first, group_last = {}, {}
+        xticks, xlabels = [], []
+
+        for hidx, h in enumerate(heat_levels):
+            start_pos = pos
+            for midx, m in enumerate(models):
+                key_base, key = (co2, temp, '0'), (co2, temp, h)
+                if key_base in all_ts[m] and key in all_ts[m]:
+                    yrs = all_ts[m][key_base].index
+                    pct = 100 * (all_ts[m][key].reindex(yrs).values - all_ts[m][key_base].values) / all_ts[m][key_base].values
+                    data_list.append(pct)
+                    positions.append(pos)
+                    colors_list.append(heat_model_colors[m][h])
+                if midx == 0: group_first[h] = pos
+                if midx == len(models) - 1: group_last[h] = pos
+                pos += 1
+            if hidx < len(heat_levels) - 1: pos += group_gap
+            xticks.append((start_pos + pos - 1) / 2)
+            xlabels.append(f"H{h}–H0")
+
+        # Scatter (Jitter)
+        for idx, d in enumerate(data_list):
+            ax.scatter(np.full_like(d, positions[idx]) + np.random.uniform(-0.14, 0.14, size=len(d)), 
+                       d, color=colors_list[idx], edgecolor='k', s=32, linewidth=0.3, alpha=0.7)
+
+        # Boxplots
+        ax.boxplot(data_list, positions=positions, widths=0.6, showfliers=False, 
+                   boxprops=dict(color='black'), whiskerprops=dict(color='black'))
+
+        ax.set_xticks(xticks); ax.set_xticklabels(xlabels, fontsize=10)
+        ax.axhline(0, color='black', linestyle='--', linewidth=0.8)
+        ax.set_ylim(-7, 5)
+        
+        if j == 0: ax.set_ylabel(f"CO2 {co2}\nΔ yield vs H0 (%)", fontsize=11)
+        if i == 0: ax.set_title(f"T = {temp:.1f}°C", fontsize=12)
+
+plt.tight_layout(rect=[0, 0, 1, 0.96])
+plt.savefig("Fig06_Heatwave_Impacts.png", dpi=600)
+plt.show()
