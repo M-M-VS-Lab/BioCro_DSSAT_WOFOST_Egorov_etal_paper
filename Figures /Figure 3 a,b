@@ -15,8 +15,8 @@ from matplotlib.ticker import MaxNLocator
 DATA_ROOT = "./data" 
 
 # USDA data paths
-usda_irrig_path    = os.path.join(DATA_ROOT, 'USDA_CSV_soybean/mean_yield_districts_60_90.csv')
-usda_nonirrig_path = os.path.join(DATA_ROOT, 'USDA_CSV_soybean/mean_yield_non_irrigated_districts_60_90.csv')
+usda_irrig_path    = os.path.join(DATA_ROOT, 'USDA_CSV_soybean/Soybean_mean_yield_60_90.csv')
+usda_nonirrig_path = os.path.join(DATA_ROOT, 'USDA_CSV_soybean/Soybean_mean_yield_non_irrigated_60_90.csv')
 grid_pts_shp       = os.path.join(DATA_ROOT, '4km_grid/4km_grid_point_no_city.shp')
 
 # Mapping models to folders (e.g., folder name "Soybean_WOFOST")
