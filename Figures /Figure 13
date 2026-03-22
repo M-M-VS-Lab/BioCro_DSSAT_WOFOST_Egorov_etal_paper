@@ -1,0 +1,137 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# =============================================================================
+# --- 1. CONFIGURATION AND DATA ---
+# =============================================================================
+
+# Hard-coded data representing the calculated yield changes (%) from baseline
+DATA =[
+    # Soybean 2031-2050
+    {'crop': 'Soybean', 'model': 'WOFOST', 'scenario': 'RCP45', 'period': '2031-2050', 'relative_slope_percent': 0},
+    {'crop': 'Soybean', 'model': 'WOFOST', 'scenario': 'RCP85', 'period': '2031-2050', 'relative_slope_percent': -1},
+    {'crop': 'Soybean', 'model': 'DSSAT',  'scenario': 'RCP45', 'period': '2031-2050', 'relative_slope_percent': 4},
+    {'crop': 'Soybean', 'model': 'DSSAT',  'scenario': 'RCP85', 'period': '2031-2050', 'relative_slope_percent': 12},
+    {'crop': 'Soybean', 'model': 'BioCro', 'scenario': 'RCP45', 'period': '2031-2050', 'relative_slope_percent': 1},
+    {'crop': 'Soybean', 'model': 'BioCro', 'scenario': 'RCP85', 'period': '2031-2050', 'relative_slope_percent': 5},
+    # Soybean 2080-2099
+    {'crop': 'Soybean', 'model': 'WOFOST', 'scenario': 'RCP45', 'period': '2080-2099', 'relative_slope_percent': -4},
+    {'crop': 'Soybean', 'model': 'WOFOST', 'scenario': 'RCP85', 'period': '2080-2099', 'relative_slope_percent': -9},
+    {'crop': 'Soybean', 'model': 'DSSAT',  'scenario': 'RCP45', 'period': '2080-2099', 'relative_slope_percent': -42},
+    {'crop': 'Soybean', 'model': 'DSSAT',  'scenario': 'RCP85', 'period': '2080-2099', 'relative_slope_percent': -40},
+    {'crop': 'Soybean', 'model': 'BioCro', 'scenario': 'RCP45', 'period': '2080-2099', 'relative_slope_percent': -1},
+    {'crop': 'Soybean', 'model': 'BioCro', 'scenario': 'RCP85', 'period': '2080-2099', 'relative_slope_percent': -7},
+    # Corn (Maize) 2031-2050
+    {'crop': 'Corn', 'model': 'WOFOST', 'scenario': 'RCP45', 'period': '2031-2050', 'relative_slope_percent': -6},
+    {'crop': 'Corn', 'model': 'WOFOST', 'scenario': 'RCP85', 'period': '2031-2050', 'relative_slope_percent': -11},
+    {'crop': 'Corn', 'model': 'DSSAT',  'scenario': 'RCP45', 'period': '2031-2050', 'relative_slope_percent': -9},
+    {'crop': 'Corn', 'model': 'DSSAT',  'scenario': 'RCP85', 'period': '2031-2050', 'relative_slope_percent': -18},
+    # Corn (Maize) 2080-2099
+    {'crop': 'Corn', 'model': 'WOFOST', 'scenario': 'RCP45', 'period': '2080-2099', 'relative_slope_percent': -3},
+    {'crop': 'Corn', 'model': 'WOFOST', 'scenario': 'RCP85', 'period': '2080-2099', 'relative_slope_percent': -15},
+    {'crop': 'Corn', 'model': 'DSSAT',  'scenario': 'RCP45', 'period': '2080-2099', 'relative_slope_percent': -6},
+    {'crop': 'Corn', 'model': 'DSSAT',  'scenario': 'RCP85', 'period': '2080-2099', 'relative_slope_percent': -60},
+]
+
+stats_df = pd.DataFrame(DATA)
+
+# Model styling
+MODEL_COLORS = {'WOFOST': '#70F249', 'BioCro': 'blue', 'DSSAT': 'magenta'}
+
+plt.rcParams.update({
+    'font.family': 'sans-serif', 
+    'font.size': 16, 
+    'axes.labelsize': 18
+})
+
+# =============================================================================
+# --- 2. PLOTTING FUNCTION ---
+# =============================================================================
+
+def create_simplified_barplot(ax, crop_name, models_to_plot, df, color_config, y_limits=None):
+    """Generates a bar plot of pre-calculated relative yield changes."""
+    df_crop = df[df['crop'] == crop_name]
+    if df_crop.empty:
+        ax.text(0.5, 0.5, "No data available", ha='center', va='center')
+        return
+
+    current_x = 0
+    group_centers = {}
+    model_gap, scenario_gap, period_gap = 1.0, 1.5, 2.5
+
+    for period in['2031-2050', '2080-2099']:
+        period_start_x = current_x
+        for scenario in ['RCP45', 'RCP85']:
+            scenario_start_x = current_x
+            for model in models_to_plot:
+                subset = df_crop[(df_crop['model'] == model) & 
+                                 (df_crop['scenario'] == scenario) & 
+                                 (df_crop['period'] == period)]
+                if not subset.empty:
+                    val = subset['relative_slope_percent'].iloc[0]
+                    ax.bar(current_x, val, color=color_config[model], width=0.8, label=model)
+                current_x += model_gap
+
+            # Center for scenario label (e.g., RCP4.5)
+            group_centers[f"{period}_{scenario}"] = (scenario_start_x + current_x - model_gap) / 2
+            current_x += scenario_gap
+
+        # Center for period label (e.g., 2031-2050)
+        group_centers[period] = (period_start_x + current_x - scenario_gap) / 2
+        current_x += period_gap
+
+    # --- Customize Axes ---
+    ax.axhline(0, color='black', linewidth=1.0)
+    ax.grid(axis='y', linestyle='--', alpha=0.6)
+    ax.set_xticks([]) # Remove default x-ticks
+    
+    if y_limits: 
+        ax.set_ylim(y_limits)
+
+    # Add custom x-axis labels
+    for group, center in group_centers.items():
+        if '_' in group:
+            lbl = group.split('_')[1][:3] + "." + group.split('_')[1][-1] # Format RCP45 -> RCP4.5
+            weight = 'bold' if '85' in group else 'normal'
+            ax.text(center, -0.05, lbl, ha='center', va='top', 
+                    transform=ax.get_xaxis_transform(), fontsize=18, fontweight=weight)
+        else:
+            ax.text(center, -0.12, group, ha='center', va='top', 
+                    transform=ax.get_xaxis_transform(), fontsize=20)
+
+# =============================================================================
+# --- 3. MAIN EXECUTION ---
+# =============================================================================
+
+if __name__ == "__main__":
+    fig, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, figsize=(16, 8), dpi=300)
+
+    # Plot Soybean (Panel a)
+    create_simplified_barplot(
+        ax=ax1,
+        crop_name='Soybean',
+        models_to_plot=['WOFOST', 'BioCro', 'DSSAT'],
+        df=stats_df,
+        color_config=MODEL_COLORS,
+        y_limits=(-65, 15)
+    )
+    ax1.set_ylabel("Yield change (%)")
+
+    # Plot Corn (Panel b)
+    create_simplified_barplot(
+        ax=ax2,
+        crop_name='Corn',
+        models_to_plot=['WOFOST', 'DSSAT'],
+        df=stats_df,
+        color_config=MODEL_COLORS,
+        y_limits=(-65, 15)
+    )
+    
+    # Optional: Add custom legend to one of the panels
+    from matplotlib.lines import Line2D
+    legend_elements = [Line2D([0], [0], color=c, lw=6, label=m) for m, c in MODEL_COLORS.items()]
+    ax1.legend(handles=legend_elements, loc='lower left', frameon=False, fontsize=16)
+
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+    plt.savefig("Fig13_Future_Projections.png", dpi=300, bbox_inches='tight')
+    plt.show()
