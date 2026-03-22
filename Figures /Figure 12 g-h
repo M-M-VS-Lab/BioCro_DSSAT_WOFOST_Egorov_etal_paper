@@ -1,0 +1,79 @@
+import os
+import glob
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
+
+# =============================================================================
+# --- CONFIGURATION ---
+# =============================================================================
+DATA_ROOT = "./data"
+MODEL_DIRS = {
+    'WOFOST': os.path.join(DATA_ROOT, 'Soybean_WOFOST'),
+    'BioCro': os.path.join(DATA_ROOT, 'Soybean_BioCro'),
+    'DSSAT':  os.path.join(DATA_ROOT, 'Soybean_DSSAT')
+}
+TARGET_YEARS = [2012, 2017]
+TARGET_CO2 = 400
+
+# =============================================================================
+# --- DATA COLLECTION ---
+# =============================================================================
+
+def collect_data(base_dir, model_name, years):
+    recs = []
+    if not os.path.isdir(base_dir): return pd.DataFrame()
+
+    for fp in glob.glob(os.path.join(base_dir, '**/*.csv'), recursive=True):
+        basename = os.path.basename(fp)
+        year_match = re.search(r'(20\d{2})', basename)
+        if not year_match: continue
+        year = int(year_match.group(1))
+        if year not in years: continue
+        
+        scen_dir = os.path.basename(os.path.dirname(fp))
+        parts = scen_dir.split('_')[1]
+        tpos, hpos = parts.find('T'), parts.find('H', parts.find('T'))
+        co2 = int(parts[1:tpos])
+        if co2 != TARGET_CO2: continue
+        
+        temp = 0.0 if parts[tpos+1:hpos] == 'BL' else float(parts[tpos+1:hpos])
+        
+        df = pd.read_csv(fp)
+        col = 'yield' if 'yield' in df.columns else 'Grain'
+        recs.append({'model': model_name, 'year': year, 'temp': temp, 'yield': df[col].mean()})
+    return pd.DataFrame(recs)
+
+# Load data
+df = pd.concat([collect_data(path, m, TARGET_YEARS) for m, path in MODEL_DIRS.items()])
+
+# =============================================================================
+# --- PLOTTING ---
+# =============================================================================
+
+for year in TARGET_YEARS:
+    fig, ax = plt.subplots(figsize=(6, 5), dpi=600)
+    
+    # Calculate baseline (T=0) for relative normalization
+    baseline_vals = {m: df[(df.model==m) & (df.year==year) & (df.temp==0)]['yield'].mean() for m in MODEL_DIRS.keys()}
+    
+    for model in MODEL_DIRS.keys():
+        subset = df[(df.model==model) & (df.year==year)].groupby('temp')['yield'].mean()
+        temps = subset.index.values
+        rel_yield = subset.values / baseline_vals[model]
+        
+        ax.plot(temps, rel_yield, label=model, lw=2.5, marker='o', markersize=4)
+
+    # Required Formatting
+    ax.set_ylim(0, 1.0)
+    ax.set_yticks([0, 0.5, 1.0])
+    ax.set_xlabel('Temperature increase (ΔT °C)')
+    ax.set_ylabel('Relative yield (0–1)')
+    ax.set_title(f'Relative Temp Response - {year}')
+    ax.grid(True, linestyle='--', alpha=0.5)
+    ax.legend(frameon=False)
+    
+    plt.tight_layout()
+    plt.savefig(f"Fig12_RelTemp_{year}.png")
+    plt.show()
