@@ -1,0 +1,204 @@
+import os
+import glob
+import re
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from PIL import ImageColor
+
+# =============================================================================
+# --- 1. CONFIGURATION AND SETTINGS ---
+# =============================================================================
+
+DATA_ROOT = "./data"
+
+# Map folders (Must match the directory structure inside ./data/)
+MODEL_DIRS = {
+    'WOFOST': os.path.join(DATA_ROOT, 'Soybean_WOFOST'),
+    'BioCro': os.path.join(DATA_ROOT, 'Soybean_BioCro'),
+    'DSSAT':  os.path.join(DATA_ROOT, 'Soybean_DSSAT')
+}
+
+# Styling configurations
+MODEL_BASE_COLORS = {
+    'WOFOST': '#70F249',
+    'BioCro': 'blue',
+    'DSSAT':  'magenta'
+}
+
+# Blend factors to lighten colors based on temperature anomalies
+TEMP_BLEND_FACTORS = {0.0: 0.8, 1.5: 0.5, 2.5: 0.2, 4.0: 0.0}
+
+# Layout configurations for the Violin plot
+MODEL_POSITIONS = {'WOFOST': 0, 'BioCro': 7, 'DSSAT': 14}
+CO2_OFFSET = 1.0
+CO2_GAP    = 1.5
+
+# =============================================================================
+# --- 2. DATA COLLECTION AND HELPER FUNCTIONS ---
+# =============================================================================
+
+def blend_with_white(hex_color, factor):
+    """Blends a hex color with white based on a given factor (0.0 to 1.0)."""
+    r, g, b = ImageColor.getrgb(hex_color)
+    r_new = int(r + (255 - r) * factor)
+    g_new = int(g + (255 - g) * factor)
+    b_new = int(b + (255 - b) * factor)
+    return f'#{r_new:02x}{g_new:02x}{b_new:02x}'
+
+# Pre-calculate colors for each model and temperature level
+TEMP_MODEL_COLORS = {
+    m: {t: blend_with_white(MODEL_BASE_COLORS[m], TEMP_BLEND_FACTORS[t]) for t in TEMP_BLEND_FACTORS.keys()}
+    for m in MODEL_BASE_COLORS
+}
+
+def collect_data(base_dir, model_name):
+    """Extracts yield data array from all CSVs within a model's scenario directories."""
+    recs =[]
+    if not os.path.isdir(base_dir):
+        print(f"Warning: Directory not found, skipping {base_dir}")
+        return pd.DataFrame()
+
+    for scen in sorted(os.listdir(base_dir)):
+        scen_path = os.path.join(base_dir, scen)
+        if not os.path.isdir(scen_path): continue
+        
+        arr_yield =[]
+        for fp in glob.glob(os.path.join(scen_path, '*.csv')):
+            try:
+                df = pd.read_csv(fp)
+                ycol = 'yield' if 'yield' in df.columns else ('Grain' if 'Grain' in df.columns else None)
+                if ycol:
+                    arr_yield.extend(df[ycol].dropna().tolist())
+            except Exception:
+                continue
+                
+        if not arr_yield: continue
+
+        # Parse scenario parameters from folder name
+        parts = scen.split('_')[1]
+        cpos, tpos = parts.find('C'), parts.find('T')
+        hpos = parts.find('H', tpos)
+        
+        co2  = int(parts[cpos+1:tpos])
+        tmp  = parts[tpos+1:hpos]
+        temp = 0.0 if tmp == 'BL' else float(tmp)
+        heat = parts[hpos+1:]
+        
+        recs.append({
+            'model': model_name,
+            'co2': co2,
+            'temp': temp,
+            'heat': heat,
+            'arr_yield': np.array(arr_yield)
+        })
+    return pd.DataFrame(recs)
+
+print("Loading data...")
+df_all = pd.concat([collect_data(path, m) for m, path in MODEL_DIRS.items()], ignore_index=True)
+
+if df_all.empty:
+    raise ValueError("No data loaded. Check if the ./data/ directory is populated correctly.")
+
+MODELS = list(MODEL_DIRS.keys())
+CO2_LEVELS = sorted(df_all['co2'].unique())
+TEMP_LEVELS = sorted(df_all['temp'].unique())
+
+# =============================================================================
+# --- 3. PLOTTING FUNCTIONS ---
+# =============================================================================
+
+def draw_half_violin_left(ax, data, pos, color):
+    """Draws the left half of a violin plot to represent data distribution."""
+    vp = ax.violinplot(
+        [data], positions=[pos], widths=0.6,
+        showmeans=False, showmedians=False, showextrema=False
+    )
+    for body in vp['bodies']:
+        verts = body.get_paths()[0].vertices
+        cx = verts[:, 0].mean()
+        verts[verts[:, 0] > cx, 0] = cx  # Cut off the right half
+        body.set_facecolor(color)
+        body.set_edgecolor('black')
+        body.set_alpha(0.7)
+
+def plot_violin_for_heatwave(df, heat_val='0'):
+    """Generates the Violin plot for a specific heatwave scenario (default H0)."""
+    df_sub = df[df['heat'] == heat_val].reset_index(drop=True)
+    if df_sub.empty:
+        print(f"No data found for heatwave scenario H{heat_val}.")
+        return
+
+    fig, ax = plt.subplots(figsize=(14, 6), dpi=600)
+    
+    for m in MODELS:
+        base_x = MODEL_POSITIONS[m]
+        for ci, c in enumerate(CO2_LEVELS):
+            x_base = base_x + (CO2_OFFSET + ci * CO2_GAP)
+            x_positions, arrs_for_group = [],[]
+            
+            for t in TEMP_LEVELS:
+                sub = df_sub[(df_sub['model'] == m) & (df_sub['co2'] == c) & (df_sub['temp'] == t)]
+                if sub.empty: continue
+                
+                arr = sub.iloc[0]['arr_yield']
+                x_positions.append(x_base)
+                arrs_for_group.append(arr)
+                
+                # Draw half-violin
+                draw_half_violin_left(ax, arr, x_base, color=TEMP_MODEL_COLORS[m][t])
+                
+                # Draw mean line for specific temperature
+                mean_val = np.mean(arr)
+                ax.hlines(mean_val, x_base - 0.5, x_base - 0.2, colors=TEMP_MODEL_COLORS[m][t], linewidth=2, zorder=10)
+
+            # Draw thick black line for the overall group mean (across all temperatures)
+            if arrs_for_group:
+                group_mean = np.mean(np.concatenate(arrs_for_group))
+                left_most_x = min(x_positions)
+                ax.hlines(group_mean, left_most_x - 0.9, left_most_x - 0.5, colors='black', linewidth=3, zorder=11)
+
+    # --- Formatting the Axes ---
+    ax.set_ylim(0, 7)
+    max_x = max(MODEL_POSITIONS.values()) + (CO2_OFFSET + (len(CO2_LEVELS)-1)*CO2_GAP) + 1.0
+    ax.set_xlim(-2, max_x + 1)
+    ax.set_xticks([])
+    ax.set_ylabel("Yield (t/ha)", fontsize=14)
+    ax.grid(axis='y', linestyle='--', alpha=0.3)
+
+    # Add custom X-axis labels (Models and CO2 levels)
+    for m in MODELS:
+        base_x = MODEL_POSITIONS[m]
+        center_pos = base_x + CO2_OFFSET + ((len(CO2_LEVELS)-1) * CO2_GAP) / 2.0
+        
+        ax.text(center_pos, -0.2, m, ha='center', va='top', transform=ax.get_xaxis_transform(), fontsize=12, fontweight='bold', color=MODEL_BASE_COLORS[m])
+        
+        for ci, c in enumerate(CO2_LEVELS):
+            x_lab = base_x + (CO2_OFFSET + ci * CO2_GAP)
+            ax.text(x_lab, -0.05, f"{c}\nppm", ha='center', va='top', transform=ax.get_xaxis_transform(), fontsize=10)
+
+    # --- Legend Construction ---
+    legend_temp_patches =[plt.Rectangle((0, 0), 1, 1, color=TEMP_MODEL_COLORS[MODELS[0]][t], alpha=0.7) for t in TEMP_LEVELS]
+    group_mean_line = plt.Line2D([0], [0], color='black', linewidth=3)
+    
+    ax.legend(
+        legend_temp_patches + [group_mean_line],[f"ΔT = +{t}°C" if t > 0 else "Baseline T" for t in TEMP_LEVELS] +["Group Mean (all T)"],
+        title="Temperature Scenarios",
+        loc='upper left', bbox_to_anchor=(1.02, 0.6),
+        frameon=False, fontsize=10, title_fontsize=12
+    )
+
+    plt.tight_layout(rect=[0, 0.05, 0.85, 1.0])
+    
+    out_file = f"FigS8_ViolinPlot_H{heat_val}.png"
+    plt.savefig(out_file, dpi=600)
+    print(f"Saved: {out_file}")
+    plt.show()
+
+# =============================================================================
+# --- 4. EXECUTION ---
+# =============================================================================
+
+if __name__ == "__main__":
+    # Generate the plot for the Baseline Heatwave scenario (H0)
+    plot_violin_for_heatwave(df_all, heat_val='0')
