@@ -21,8 +21,8 @@ MODEL_DIRS = {
 
 # USDA historical data and Grid shapefile paths
 USDA_PATHS = {
-    'USDA Irrigated':     os.path.join(DATA_ROOT, 'USDA_CSV/maize_irg_yield_districts_60_90_2001_2019_tons_per_ha.csv'),
-    'USDA Non-irrigated': os.path.join(DATA_ROOT, 'USDA_CSV/maize_non_irg_yield_districts_60_90_2001_2019_tons_per_ha.csv')
+    'USDA Irrigated':     os.path.join(DATA_ROOT, 'USDA_CSV/Maize_yield_non_irrigated_districts_60_90.csv'),
+    'USDA Non-irrigated': os.path.join(DATA_ROOT, 'USDA_CSV/Maize_yield_non_irrigated_districts_60_90.csv')
 }
 GRID_SHAPE = os.path.join(DATA_ROOT, '4km_2025_grid_pol2/4km_2025_grid_point_with_no_city.shp')
 
