@@ -1,0 +1,151 @@
+import os
+import re
+import glob
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+import matplotlib.pyplot as plt
+from scipy.stats import linregress
+from matplotlib.ticker import MaxNLocator
+
+# =============================================================================
+# --- 1. CONFIGURATION AND PATHS ---
+# =============================================================================
+DATA_ROOT = "./data"
+
+# Map your model folder names (must match the structure inside /data)
+MODEL_DIRS = {
+    'WOFOST': os.path.join(DATA_ROOT, 'Maize_WOFOST'),
+    'DSSAT':  os.path.join(DATA_ROOT, 'Maize_DSSAT')
+}
+
+# USDA historical data and Grid shapefile paths
+USDA_PATHS = {
+    'USDA Irrigated':     os.path.join(DATA_ROOT, 'USDA_CSV/maize_irg_yield_districts_60_90_2001_2019_tons_per_ha.csv'),
+    'USDA Non-irrigated': os.path.join(DATA_ROOT, 'USDA_CSV/maize_non_irg_yield_districts_60_90_2001_2019_tons_per_ha.csv')
+}
+GRID_SHAPE = os.path.join(DATA_ROOT, '4km_2025_grid_pol2/4km_2025_grid_point_with_no_city.shp')
+
+# Styling
+COLORS = {'WOFOST': '#70F249', 'DSSAT': 'magenta'}
+USDA_COLORS = {'USDA Irrigated': 'black', 'USDA Non-irrigated': 'grey'}
+LINE_WIDTH = 1.8
+REG_WIDTH = 0.8
+USDA_WIDTH = 2.2
+USDA_REG_WIDTH = 1.2
+ALPHA = {'WOFOST': 0.2, 'DSSAT': 0.05}
+FONT_SIZE = 16
+
+# =============================================================================
+# --- 2. DATA PROCESSING FUNCTIONS ---
+# =============================================================================
+
+def get_grid_ids(shp_path):
+    """Loads the spatial grid and returns a set of valid IDs."""
+    if not os.path.exists(shp_path):
+        print(f"Warning: Shapefile not found at {shp_path}. Using all grid points.")
+        return None
+    grid = gpd.read_file(shp_path)
+    return set(grid['ORIG_FID'].unique())
+
+def compute_trend(base_dir, valid_ids):
+    """Calculates annual mean yield, standard deviation, and linear regression."""
+    ts_mean, ts_std = {}, {}
+    year_pat = re.compile(r'(20\d{2})')
+    
+    if not os.path.exists(base_dir):
+        return None
+        
+    # Locate the baseline scenario folder (e.g., historical T=BL, H=0)
+    scenario = next((s for s in sorted(os.listdir(base_dir)) if 'TBLH0' in s), None)
+    path = os.path.join(base_dir, scenario) if scenario else base_dir
+    
+    for fp in sorted(glob.glob(os.path.join(path, '*.csv'))):
+        m = year_pat.search(os.path.basename(fp))
+        if not m: continue
+        y = int(m.group(1))
+        
+        df = pd.read_csv(fp)
+        id_col  = next((c for c in ('real_id', 'ID', 'id', 'ORIG_FID') if c in df.columns), None)
+        val_col = next((c for c in ('yield', 'Grain') if c in df.columns), None)
+        
+        if id_col and val_col:
+            if valid_ids is not None:
+                vals = df[df[id_col].isin(valid_ids)][val_col].dropna()
+            else:
+                vals = df[val_col].dropna()
+                
+            if not vals.empty:
+                ts_mean[y] = vals.mean()
+                ts_std[y]  = vals.std()
+                
+    if not ts_mean:
+        return None
+        
+    yrs   = np.array(sorted(ts_mean.keys()))
+    means = np.array([ts_mean[y] for y in yrs])
+    stds  = np.array([ts_std[y]  for y in yrs])
+    
+    slope, intercept, r_val, p_val, _ = linregress(yrs, means)
+    return yrs, means, stds, slope, intercept, r_val, p_val
+
+# =============================================================================
+# --- 3. MAIN PLOTTING SCRIPT ---
+# =============================================================================
+
+def plot_maize_trend():
+    valid_ids = get_grid_ids(GRID_SHAPE)
+    fig, ax = plt.subplots(figsize=(11, 8), dpi=600)
+    
+    print("\n=== Trend equations (Absolute Yield) ===")
+    
+    # 1. Plot Models
+    for name, base_dir in MODEL_DIRS.items():
+        result = compute_trend(base_dir, valid_ids)
+        if result is None:
+            print(f"Skipping {name}: Data not found.")
+            continue
+            
+        yrs, means, stds, slope, intercept, r_val, p_val = result
+        
+        ax.plot(yrs, means, color=COLORS[name], lw=LINE_WIDTH, label=name)
+        ax.fill_between(yrs, means - stds, means + stds, color=COLORS[name], alpha=ALPHA[name])
+        ax.plot(yrs, intercept + slope * yrs, color=COLORS[name], lw=REG_WIDTH, linestyle='--')
+        
+        print(f"{name}: y = {slope:.3f}x + {intercept:.2f}, R = {r_val:.2f}, p = {p_val:.3f}")
+
+    # 2. Plot USDA Data
+    for lbl, path in USDA_PATHS.items():
+        if not os.path.exists(path):
+            print(f"Skipping {lbl}: File not found.")
+            continue
+            
+        df_u = pd.read_csv(path)
+        yrs_u = df_u['Year'].values
+        vals_u = df_u['Mean_60_90'].values
+        
+        ax.plot(yrs_u, vals_u, color=USDA_COLORS[lbl], lw=USDA_WIDTH, label=lbl)
+        
+        slope_u, intercept_u, r_u, p_u, _ = linregress(yrs_u, vals_u)
+        ax.plot(yrs_u, intercept_u + slope_u * yrs_u, color=USDA_COLORS[lbl], lw=USDA_REG_WIDTH, linestyle='--')
+        
+        print(f"{lbl}: y = {slope_u:.3f}x + {intercept_u:.2f}, R = {r_u:.2f}, p = {p_u:.3f}")
+
+    # 3. Formatting
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    ax.set_xlabel('Year', fontsize=FONT_SIZE + 2)
+    ax.set_ylabel('Mean yield (t ha⁻¹)', fontsize=FONT_SIZE + 2)
+    ax.set_title('Maize Yield Trend (2001-2020)', fontsize=FONT_SIZE + 4)
+    ax.legend(loc='lower right', fontsize=FONT_SIZE, frameon=False)
+    
+    # Hide default grid to match publication style
+    ax.grid(False)
+
+    plt.tight_layout()
+    out_file = "Fig3c_Maize_Yield_Trend.png"
+    plt.savefig(out_file, dpi=600)
+    print(f"\nSaved plot as {out_file}")
+    plt.show()
+
+if __name__ == "__main__":
+    plot_maize_trend()
