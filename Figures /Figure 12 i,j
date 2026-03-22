@@ -4,81 +4,80 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-from matplotlib.colors import Normalize, LinearSegmentedColormap
-from matplotlib.cm import ScalarMappable
 
 # =============================================================================
 # --- CONFIGURATION ---
 # =============================================================================
 DATA_ROOT = "./data"
-# Ensure your folder structure matches: ./data/Maize_WOFOST/ and ./data/Maize_DSSAT/
+# Map your model folder names (must match structure in /data)
 model_dirs = {
     'WOFOST': os.path.join(DATA_ROOT, 'Maize_WOFOST'),
     'DSSAT':  os.path.join(DATA_ROOT, 'Maize_DSSAT')
 }
 TARGET_YEARS = [2012, 2017]
-HEAT_LEVELS = ['1', '2', '3', '123']
+MODEL_COLORS = {'WOFOST': '#70F249', 'DSSAT': 'magenta'}
 
 # =============================================================================
-# --- DATA LOADING ---
+# --- DATA COLLECTION ---
 # =============================================================================
 
-def extract_year_from_filename(fp):
-    return int(os.path.basename(fp).split('_')[-1].replace('.csv', ''))
-
-def collect_data(base_dir, model_name, years):
+def collect_yield_data(base_dir, model_name, years):
     recs = []
-    # Search for all csv files recursively
+    # Search for all csv files
     for fp in glob.glob(os.path.join(base_dir, '**/*.csv'), recursive=True):
-        year = extract_year_from_filename(fp)
+        basename = os.path.basename(fp)
+        year_match = re.search(r'(20\d{2})', basename)
+        if not year_match: continue
+        year = int(year_match.group(1))
         if year not in years: continue
         
-        # Parse scenario from parent folder name (convention: 10M_C400T1.5H1)
-        scen_name = os.path.basename(os.path.dirname(fp))
-        part = scen_name.split('_')[1]
-        tpos = part.find('T'); hpos = part.find('H', tpos)
-        temp = 0.0 if part[tpos+1:hpos] == 'BL' else float(part[tpos+1:hpos])
-        heat = part[hpos+1:]
+        # Parse scenario from folder path
+        scen_dir = os.path.basename(os.path.dirname(fp))
+        parts = scen_dir.split('_')[1]
+        tpos = parts.find('T'); hpos = parts.find('H', tpos)
+        temp = 0.0 if parts[tpos+1:hpos] == 'BL' else float(parts[tpos+1:hpos])
+        heat = parts[hpos+1:]
         
         df = pd.read_csv(fp)
-        ycol = 'yield' if 'yield' in df.columns else 'Grain'
-        recs.append({'model': model_name, 'year': year, 'temp': temp, 'heat': heat, 'val': df[ycol].mean()})
+        col = 'yield' if 'yield' in df.columns else 'Grain'
+        val = df[col].mean()
+        
+        recs.append({'model': model_name, 'year': year, 'temp': temp, 'heat': heat, 'yield': val})
     return pd.DataFrame(recs)
 
-# Load and aggregate
-df = pd.concat([collect_data(path, m, TARGET_YEARS) for m, path in model_dirs.items()])
-temp_levels = sorted(df['temp'].unique())
+# Load and process data
+df = pd.concat([collect_yield_data(path, m, TARGET_YEARS) for m, path in model_dirs.items()])
 
 # =============================================================================
-# --- PLOTTING (Fig 12 i, j) ---
+# --- PLOTTING (Relative Temp Only) ---
 # =============================================================================
 
-def plot_relative_yields():
-    model_colors = {'WOFOST': '#70F249', 'DSSAT': 'magenta'}
+for year in TARGET_YEARS:
+    fig, ax = plt.subplots(figsize=(8, 6), dpi=600)
     
-    for year in TARGET_YEARS:
-        fig, ax = plt.subplots(figsize=(6, 5), dpi=300)
+    for model in model_dirs.keys():
+        # Baseline yield (T=0, H=0)
+        baseline = df[(df.model==model) & (df.year==year) & (df.temp==0) & (df.heat=='0')]['yield'].mean()
         
-        for model in model_dirs.keys():
-            # Calculate baseline (T=0, H=0)
-            base_val = df[(df.model==model) & (df.year==year) & (df.temp==0) & (df.heat=='0')]['val'].mean()
-            
-            # Plot trends for each Heat level
-            for h in HEAT_LEVELS:
-                subset = df[(df.model==model) & (df.year==year) & (df.heat==h)].sort_values('temp')
-                temps = subset['temp'].unique()
-                means = [subset[subset.temp==t]['val'].mean() / base_val for t in temps]
-                ax.plot(temps, means, color=model_colors[model], lw=2, alpha=0.3 + (0.15 * HEAT_LEVELS.index(h)))
-        
-        # Formatting
-        ax.set_ylim(0, 1.0)
-        ax.set_yticks(np.arange(0, 1.1, 0.5))
-        ax.set_xlabel('Temperature Increase (°C)')
-        ax.set_ylabel('Relative yield (vs baseline)')
-        ax.set_title(f'Maize response {year}')
-        
-        plt.tight_layout()
-        plt.savefig(f"Fig12_Maize_RelYield_{year}.png")
-        plt.show()
+        # Plot curves for each Heat level
+        heat_levels = sorted(df.heat.unique())
+        for h in heat_levels:
+            subset = df[(df.model==model) & (df.year==year) & (df.heat==h)].sort_values('temp')
+            temps = subset['temp'].values
+            rel_yield = subset['yield'].values / baseline
+            ax.plot(temps, rel_yield, label=f"{model} H{h}", color=MODEL_COLORS[model], alpha=0.5 + (0.5 if h=='0' else 0))
 
-plot_relative_yields()
+    # Formatting as requested
+    ax.set_ylim(0, 1.0)
+    ax.set_yticks([0, 0.5, 1.0])
+    ax.set_xlabel('Temperature increase (ΔT °C)')
+    ax.set_ylabel('Relative yield change')
+    ax.set_title(f'Temperature Response - {year}')
+    
+    # Custom Legend
+    legend_elements = [Line2D([0], [0], color=c, lw=2, label=m) for m, c in MODEL_COLORS.items()]
+    ax.legend(handles=legend_elements, frameon=False)
+    
+    plt.tight_layout()
+    plt.savefig(f"Temp_Response_{year}.png")
+    plt.show()
