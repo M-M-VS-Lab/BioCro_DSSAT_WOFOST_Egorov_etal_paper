@@ -1,0 +1,103 @@
+import os
+import glob
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+from matplotlib.colors import ListedColormap, LinearSegmentedColormap
+
+# =============================================================================
+# --- CONFIGURATION ---
+# =============================================================================
+DATA_ROOT = "./data"
+
+# Map folders (Ensure your ./data folder has these subfolders)
+crop_dirs = {
+    'Soybean': {
+        'WOFOST': os.path.join(DATA_ROOT, 'Soybean_WOFOST'),
+        'BioCro': os.path.join(DATA_ROOT, 'Soybean_BioCro'),
+        'DSSAT':  os.path.join(DATA_ROOT, 'Soybean_DSSAT')
+    },
+    'Maize': {
+        'WOFOST': os.path.join(DATA_ROOT, 'Maize_WOFOST'),
+        'DSSAT':  os.path.join(DATA_ROOT, 'Maize_DSSAT')
+    }
+}
+
+# Colormaps
+base_cmaps = {
+    'WOFOST': LinearSegmentedColormap.from_list('wofost', ['white', '#70F249']),
+    'DSSAT':  LinearSegmentedColormap.from_list('dssat', ['white', 'magenta']),
+    'BioCro': LinearSegmentedColormap.from_list('biocro', ['white', 'blue'])
+}
+
+# =============================================================================
+# --- DATA COLLECTION ---
+# =============================================================================
+
+def collect_data(base_dir, crop, model):
+    recs = []
+    if not os.path.isdir(base_dir): return pd.DataFrame()
+
+    # Search recursively for CSVs
+    for fp in glob.glob(os.path.join(base_dir, '**/*.csv'), recursive=True):
+        scen_dir = os.path.basename(os.path.dirname(fp))
+        parts = scen_dir.split('_')[1]
+        cpos, tpos = parts.find('C'), parts.find('T')
+        hpos = parts.find('H', tpos)
+        
+        co2  = int(parts[cpos+1:tpos])
+        tmp  = parts[tpos+1:hpos]
+        temp = 0.0 if tmp == 'BL' else float(tmp)
+        heat = parts[hpos+1:]
+        
+        df = pd.read_csv(fp)
+        col = 'yield' if 'yield' in df.columns else ('Grain' if 'Grain' in df.columns else None)
+        if col:
+            recs.append({'crop': crop, 'model': model, 'co2': co2, 'temp': temp, 'heat': heat, 'yield': df[col].mean()})
+    return pd.DataFrame(recs)
+
+df_all = pd.concat([collect_data(path, c, m) for c, models in crop_dirs.items() for m, path in models.items()])
+
+# =============================================================================
+# --- PLOTTING ---
+# =============================================================================
+
+temp_levels = sorted(df_all['temp'].unique())
+heat_levels = sorted(df_all['heat'].unique(), key=lambda x: (len(x), x))
+co2_levels = [400, 600, 800]
+crops = ['Soybean', 'Maize']
+
+fig, axes = plt.subplots(len(co2_levels), len(crops), figsize=(12, 12), sharex=True, sharey=True)
+
+for i, c in enumerate(co2_levels):
+    for j, crop in enumerate(crops):
+        ax = axes[i, j]
+        plot_co2 = 400 if crop == 'Maize' else c
+        
+        # Calculate baseline (T=0, H='0') for relative calc
+        base_df = df_all[(df_all.crop == crop) & (df_all.temp == 0) & (df_all.heat == '0') & (df_all.co2 == (400 if crop=='Maize' else c))]
+        
+        for model in crop_dirs[crop].keys():
+            baseline_val = base_df[base_df.model == model]['yield'].mean()
+            
+            # Sub-colormap for heat levels
+            cmap_func = lambda n: base_cmaps[model](np.linspace(0.2, 0.82, n))
+            colors = cmap_func(len(heat_levels))
+            
+            for k, h in enumerate(heat_levels):
+                ys = [df_all[(df_all.crop==crop)&(df_all.model==model)&(df_all.co2==plot_co2)&(df_all.temp==t)&(df_all.heat==h)]['yield'].mean() / baseline_val for t in temp_levels]
+                ax.plot(temp_levels, ys, color=colors[k], lw=2)
+
+        ax.set_title(f"{crop} (CO₂={plot_co2} ppm)")
+        ax.set_ylim(0, 1.0)
+        ax.set_yticks([0, 0.5, 1.0])
+        ax.grid(axis='x', linestyle='--', alpha=0.5)
+
+# Axis labels
+for j, crop in enumerate(crops): axes[-1, j].set_xlabel('ΔT (°C)')
+for i, c in enumerate(co2_levels): axes[i, 0].set_ylabel('Relative yield')
+
+plt.tight_layout()
+plt.savefig("Fig12_Relative_Response.png", dpi=600)
+plt.show()
