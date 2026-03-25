@@ -1,0 +1,12 @@
+Year,Crop,id,WOFOST,CERES-Maize,Precipitation,full_data,irg,OBS yield
+2003,M,US-NE1,10.1666,14.776,,yes,irrigated,12.12
+2004,M,US-NE1,12.6585,13.672,,yes,irrigated,12.24
+2005,M,US-NE1,11.2891,13.44,,yes,irrigated,12.02
+2006,M,US-NE1,11.5543,15.353,,yes,irrigated,10.46
+2007,M,US-NE1,10.863,11.174,,yes,irrigated,12.8
+2003,M,US-NE2,10.2774,15.723,,yes,irrigated,14
+2005,M,US-NE2,11.16,13.647,,yes,irrigated,13.24
+2007,M,US-NE2,10.822,10.64,,yes,irrigated,13.21
+2003,M,US-NE3,10.3259,2.783,,yes,rainfed,7.44
+2005,M,US-NE3,6.4975,5.559,,yes,rainfed,8.96
+2007,M,US-NE3,10.5965,5.403,,yes,rainfed,9.93

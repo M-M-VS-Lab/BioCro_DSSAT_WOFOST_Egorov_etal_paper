@@ -1,0 +1,13 @@
+﻿Year,Crop,id,Type,OBS yield,Soybean-BioCro,CROPGRO-Soybean yield,WOFOST,irg
+2004,soybean,US-NE2,Val,3.71,4.63,4.068,3.5882,irrigated 
+2006,soybean,US-NE2,Val,4.36,3.81,3.718,3.1188,irrigated 
+2008,soybean,US-NE2,Val,4.22,4.750084,4.495,3.744,irrigated 
+2014,soybean,US-NE2,Val,3.74,3.768224,3.427,3.6168,irrigated 
+2016,soybean,US-NE2,Val,4.09,4.015865,3.928,3.744,irrigated 
+2004,soybean,US-NE3,Val,3.41,4.15,4.068,3.4448,rainfed
+2006,soybean,US-NE3,Val,4.31,3.891034,1.3,3.1337,rainfed
+2008,soybean,US-NE3,Val,3.97,4.42,3.294,3.7535,rainfed
+2010,soybean,US-NE3,Val,4.14,4.36,4.024,2.8358,rainfed
+2012,soybean,US-NE3,Val,2.17,3.31,1.25,2.9776,rainfed
+2014,soybean,US-NE3,Val,3.6,3.671619,2.209,3.491,rainfed
+2016,soybean,US-NE3,Val,4.38,4.013233,2.437,3.4459,rainfed
