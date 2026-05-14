@@ -33,7 +33,7 @@ LINE_WIDTH = 1.8
 REG_WIDTH = 0.8
 USDA_WIDTH = 2.2
 USDA_REG_WIDTH = 1.2
-ALPHA = {'WOFOST': 0.2, 'DSSAT': 0.05}
+ALPHA = {'WOFOST': 0.2, 'DSSAT': 0.1}
 FONT_SIZE = 16
 
 # =============================================================================
